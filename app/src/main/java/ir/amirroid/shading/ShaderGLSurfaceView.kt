@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.concurrent.ConcurrentHashMap
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
@@ -48,15 +49,10 @@ class ShaderRenderer : GLSurfaceView.Renderer {
     private var timeHandle = 0
     private var resolutionHandle = 0
 
-    private var param0Handle = 0
-    private var param1Handle = 0
-    private var param2Handle = 0
-    private var param3Handle = 0
+    private val dynamicUniforms = mutableListOf<Pair<String, Int>>()
 
-    @Volatile var param0 = 0f
-    @Volatile var param1 = 0f
-    @Volatile var param2 = 0f
-    @Volatile var param3 = 0f
+    val uniformValues = ConcurrentHashMap<String, Float>()
+    @Volatile var discoveredUniforms: List<String> = emptyList()
 
     private var width = 0
     private var height = 0
@@ -96,10 +92,9 @@ class ShaderRenderer : GLSurfaceView.Renderer {
         GLES20.glUniform1f(timeHandle, elapsed)
         GLES20.glUniform2f(resolutionHandle, width.toFloat(), height.toFloat())
 
-        GLES20.glUniform1f(param0Handle, param0)
-        GLES20.glUniform1f(param1Handle, param1)
-        GLES20.glUniform1f(param2Handle, param2)
-        GLES20.glUniform1f(param3Handle, param3)
+        for ((name, handle) in dynamicUniforms) {
+            GLES20.glUniform1f(handle, uniformValues[name] ?: 0f)
+        }
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         GLES20.glDisableVertexAttribArray(positionHandle)
@@ -136,10 +131,16 @@ class ShaderRenderer : GLSurfaceView.Renderer {
         positionHandle = GLES20.glGetAttribLocation(program, "aPosition")
         timeHandle = GLES20.glGetUniformLocation(program, "uTime")
         resolutionHandle = GLES20.glGetUniformLocation(program, "uResolution")
-        param0Handle = GLES20.glGetUniformLocation(program, "uParam0")
-        param1Handle = GLES20.glGetUniformLocation(program, "uParam1")
-        param2Handle = GLES20.glGetUniformLocation(program, "uParam2")
-        param3Handle = GLES20.glGetUniformLocation(program, "uParam3")
+
+        dynamicUniforms.clear()
+        val names = extractUniforms(fragmentSource)
+        for (name in names) {
+            val handle = GLES20.glGetUniformLocation(program, name)
+            dynamicUniforms.add(name to handle)
+            uniformValues.putIfAbsent(name, 0f)
+        }
+        uniformValues.keys.retainAll(names.toSet())
+        discoveredUniforms = names
 
         return ShaderCompileResult.Success
     }
@@ -160,6 +161,16 @@ class ShaderRenderer : GLSurfaceView.Renderer {
     }
 
     companion object {
+        private val BUILTIN_UNIFORMS = setOf("uTime", "uResolution")
+        private val UNIFORM_REGEX = Regex("""uniform\s+float\s+(\w+)\s*;""")
+
+        fun extractUniforms(source: String): List<String> =
+            UNIFORM_REGEX.findAll(source)
+                .map { it.groupValues[1] }
+                .filter { it !in BUILTIN_UNIFORMS }
+                .distinct()
+                .toList()
+
         val DEFAULT_FRAGMENT_SHADER = """
             precision mediump float;
             uniform float uTime;

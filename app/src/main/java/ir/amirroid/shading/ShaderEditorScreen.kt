@@ -19,6 +19,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -50,9 +53,10 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshots.SnapshotStateMap
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -131,8 +135,11 @@ fun ShaderEditorScreen() {
             )
         }
 
+        val uniforms = remember(shaderCode) {
+            ShaderRenderer.extractUniforms(shaderCode)
+        }
         glView?.let { view ->
-            IdeParamPanel(renderer = view.renderer)
+            IdeParamPanel(renderer = view.renderer, uniforms = uniforms)
         }
 
         AnimatedVisibility(
@@ -235,13 +242,11 @@ fun IdeTopBar(isRunning: Boolean, onRun: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun IdeParamPanel(renderer: ShaderRenderer) {
+fun IdeParamPanel(renderer: ShaderRenderer, uniforms: List<String>) {
     var expanded by rememberSaveable { mutableStateOf(true) }
-    var p0 by remember { mutableFloatStateOf(0f) }
-    var p1 by remember { mutableFloatStateOf(0f) }
-    var p2 by remember { mutableFloatStateOf(0f) }
-    var p3 by remember { mutableFloatStateOf(0f) }
+    val values: SnapshotStateMap<String, Float> = remember { mutableStateMapOf() }
 
     val arrowAngle by animateFloatAsState(
         targetValue = if (expanded) 0f else -90f,
@@ -285,14 +290,14 @@ fun IdeParamPanel(renderer: ShaderRenderer) {
                 animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
                 label = "blinkAlpha"
             )
-            if (expanded) {
+            if (expanded && uniforms.isNotEmpty()) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(end = 8.dp)
                 ) {
-                    listOf(p0, p1, p2, p3).forEachIndexed { index, value ->
-                        val active = value != 0f
+                    uniforms.forEach { name ->
+                        val active = (values[name] ?: 0f) != 0f
                         Box(
                             modifier = Modifier
                                 .size(5.dp)
@@ -316,16 +321,33 @@ fun IdeParamPanel(renderer: ShaderRenderer) {
         }
 
         if (expanded) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                UniformSlider("uParam0", p0, Modifier.weight(1f)) { p0 = it; renderer.param0 = it }
-                UniformSlider("uParam1", p1, Modifier.weight(1f)) { p1 = it; renderer.param1 = it }
-                UniformSlider("uParam2", p2, Modifier.weight(1f)) { p2 = it; renderer.param2 = it }
-                UniformSlider("uParam3", p3, Modifier.weight(1f)) { p3 = it; renderer.param3 = it }
+            if (uniforms.isEmpty()) {
+                Text(
+                    "No adjustable uniforms",
+                    color = TextMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 10.dp)
+                )
+            } else {
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    maxItemsInEachRow = 4
+                ) {
+                    uniforms.forEach { name ->
+                        val value = values[name] ?: 0f
+                        UniformSlider(name, value, Modifier.width(78.dp)) {
+                            values[name] = it
+                            renderer.uniformValues[name] = it
+                        }
+                    }
+                }
             }
         }
 
